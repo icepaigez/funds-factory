@@ -7,6 +7,4 @@
 [submodule "lib/forge-std"]
 	path = lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
-[submodule "lib/pooltogether"]
-	path = lib/pooltogether
-	url = https://github.com/GenerationSoftware/pt-v5-prize-pool
+
