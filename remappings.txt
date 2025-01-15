@@ -1,0 +1,7 @@
+@chainlink/contracts/=lib/foundry-chainlink-toolkit/contracts/
+forge-std/=lib/forge-std/src/
+@openzeppelin/=lib/foundry-chainlink-toolkit/lib/openzeppelin-contracts/
+ds-test/=lib/foundry-chainlink-toolkit/lib/forge-std/lib/ds-test/src/
+foundry-chainlink-toolkit/=lib/foundry-chainlink-toolkit/
+openzeppelin-contracts/=lib/foundry-chainlink-toolkit/lib/openzeppelin-contracts/
+foundry-devops/=lib/foundry-devops/
