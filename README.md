@@ -1,4 +1,4 @@
-# CrowdFund Smart Contract
+# Crowd Funding Platform
 
 A decentralized crowdfunding platform built on Ethereum using Foundry.
 
@@ -14,7 +14,7 @@ The CrowdFund project allows users to create and participate in crowdfunding cam
 - **Secure Fund Management**: Only the campaign owner can withdraw funds after the campaign ends.
 - **Multiple Donor Tracking**: Keep track of individual donor contributions and total donations.
 - **Donation State Management**: Manage the state of donations and ensure that no donations are accepted after the campaign ends.
-- **Prize Vault Integration**: Option to deposit donations into a prize vault for potential prize winnings.
+- **No-loss lottery Integration**: Option to deposit donations into a no-loss lottery for potentially boosting the funds raised.
 - **Fee Management**: The platform can earn fees from donations and prize winnings.
 
 ## Technical Stack
