@@ -1,11 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {PrizeVault} from "pt-v5-vault/src/PrizeVault.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {PrizePool} from "pt-v5-prize-pool/src/PrizePool.sol";
 
-contract MockPrizeVault is ERC4626 {
+contract MockPrizeVault is PrizeVault {
     constructor(
-        IERC20 asset
-    ) ERC4626(asset) ERC20("Prize Vault Token", "pvPOOL") {}
+        string memory name_,
+        string memory symbol_,
+        IERC4626 yieldVault_,
+        PrizePool prizePool_,
+        address claimer_,
+        address yieldFeeRecipient_,
+        uint32 yieldFeePercentage_,
+        uint256 yieldBuffer_,
+        address owner_
+    )
+        PrizeVault(
+            name_,
+            symbol_,
+            yieldVault_,
+            prizePool_,
+            claimer_,
+            yieldFeeRecipient_,
+            yieldFeePercentage_,
+            yieldBuffer_,
+            owner_
+        )
+    {}
 }

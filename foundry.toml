@@ -7,6 +7,8 @@ cbor_metadata = false
 sparse_mode = false
 libs = ["lib"]
 fs_permissions = [{ access = "read", path = "./broadcast" }, { access = "read", path = "./reports" }]
+via_ir = true
+optimizer = true
 
 [profile.default.optimizer_details]
 # constantOptimizer = true

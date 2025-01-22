@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+//import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
-interface IPrizeVault is IERC4626 {
+interface IPrizeVault {
     // Events
     event YieldFeeRecipientSet(address indexed yieldFeeRecipient);
     event YieldFeePercentageSet(uint256 yieldFeePercentage);
@@ -76,4 +76,15 @@ interface IPrizeVault is IERC4626 {
     function setLiquidationPair(address liquidationPair) external;
     function setYieldFeePercentage(uint32 yieldFeePercentage) external;
     function setYieldFeeRecipient(address yieldFeeRecipient) external;
+    function asset() external view returns (address);
+    function convertToShares(uint256 _assets) external view returns (uint256);
+    function deposit(
+        uint256 _assets,
+        address _receiver
+    ) external returns (uint256);
+    function withdraw(
+        uint256 _assets,
+        address _receiver,
+        address _owner
+    ) external returns (uint256);
 }

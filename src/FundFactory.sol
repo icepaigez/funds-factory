@@ -14,25 +14,8 @@ contract FundFactory {
         i_owner = _owner;
     }
 
-    function createFund(
-        uint256 _minDonationAmount,
-        address _dataFeed,
-        uint256 _campaignDurationInHours,
-        address _fundFactory,
-        address _prizeVault,
-        address _prizePool,
-        address _swapContract
-    ) public returns (CrowdFund) {
-        CrowdFund newFund = new CrowdFund(
-            msg.sender,
-            _dataFeed,
-            _minDonationAmount,
-            _campaignDurationInHours,
-            _fundFactory,
-            _prizeVault,
-            _prizePool,
-            _swapContract
-        );
+    function createFund(address _fundFactory) public returns (CrowdFund) {
+        CrowdFund newFund = new CrowdFund(msg.sender, _fundFactory);
         deployedFunds.push(address(newFund));
         startedFundRaising[address(newFund)] = true;
         return newFund;
