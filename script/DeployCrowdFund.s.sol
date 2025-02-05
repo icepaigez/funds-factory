@@ -16,8 +16,8 @@ contract DeployCrowdFund is Script {
             address,
             address,
             address,
-            address payable,
-            address payable,
+            address,
+            address,
             address,
             address,
             address,
@@ -34,8 +34,8 @@ contract DeployCrowdFund is Script {
             address swapContract
         ) = helperConfig.deployConfig();
         (
-            address payable weth,
-            address payable usdc,
+            address weth,
+            address usdc,
             address uniswapV3factory,
             address poolPair
         ) = helperConfig.mockConfigs();

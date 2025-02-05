@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {ChainId} from "@uniswap/v3-periphery/contracts/libraries/ChainId.sol";
-import {IERC1271} from "@uniswap/v3-periphery/contracts/interfaces/external/IERC1271.sol";
-import {IERC721Permit} from "@uniswap/v3-periphery/contracts/interfaces/IERC721Permit.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+import "@uniswap/v3-periphery/contracts/libraries/ChainId.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/external/IERC1271.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/IERC721Permit.sol";
 import {BlockTimestamp} from "../uniswap-v3/BlockTimestamp.sol";
 
 /// @title ERC721 with permit
 /// @notice Nonfungible tokens that support an approve via signature, i.e. permit
-abstract contract ERC721Permit is BlockTimestamp, ERC721, IERC721Permit {
+abstract contract ERC721Permit is
+    BlockTimestamp,
+    ERC721Enumerable,
+    IERC721Permit
+{
     /// @dev Gets the current nonce for a token ID and then increments it, returning the original value
     function _getAndIncrementNonce(
         uint256 tokenId

@@ -5,7 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {FundFactory} from "../../src/FundFactory.sol";
 import {CrowdFund} from "../../src/CrowdFund.sol";
 import {DeployFundFactory} from "../../script/DeployFundFactory.s.sol";
-import {HelperConfig} from "../../script/HelperConfig.s.sol";
+//import {HelperConfig} from "../../script/HelperConfig.s.sol";
 
 // contract FundFactoryTest is Test {
 //     FundFactory fundFactory;

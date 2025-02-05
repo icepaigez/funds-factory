@@ -24,7 +24,7 @@ contract ExternalContractA is Script {
         CrowdFund crowdFund = _address != address(0)
             ? CrowdFund(payable(_address))
             : run();
-        crowdFund.acceptDonation{value: _FUND_AMOUNT}();
+        crowdFund.acceptDonation{value: _FUND_AMOUNT}(0);
         console.log(
             "Funded CrowdFund from the external contract with:",
             _FUND_AMOUNT
@@ -46,11 +46,15 @@ contract ExternalContractA is Script {
         vm.stopBroadcast();
     }
 
-    function withdrawDonations(address _address, uint256 _amount) public {
+    function withdrawDonations(
+        address _address,
+        uint256 _amount,
+        uint256 _minAmountOut
+    ) public {
         CrowdFund crowdFund = _address != address(0)
             ? CrowdFund(payable(_address))
             : run();
-        crowdFund.withdrawDonations(_amount);
+        crowdFund.withdrawDonations(_amount, _minAmountOut);
     }
 
     function getFundAmount() external pure returns (uint256) {

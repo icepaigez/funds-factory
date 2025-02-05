@@ -1,26 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+import {console} from "forge-std/console.sol";
 import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
 import {PrizeVault} from "pt-v5-vault/src/PrizeVault.sol";
 import {PrizePool} from "pt-v5-prize-pool/src/PrizePool.sol";
 import {IUniswapV3Factory} from "./interfaces/IUniswapV3Factory.sol";
 import {IWETH} from "./interfaces/IWETH.sol";
 import {FundFactory} from "./FundFactory.sol";
-import {OracleLibrary} from "./libraries/OracleLibrary.sol";
+import {OracleLibrary} from "@uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol";
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import {TransferHelper} from "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
+import "forge-std/console.sol";
 
-contract CrowdFund {
+contract CrowdFund is ReentrancyGuard {
     using SafeERC20 for IERC20;
     error CrowdFund__NotOwner(); //a custom gas saving error
 
     // State variables
     address public immutable i_owner;
     mapping(address => uint256) public s_donorAmount;
-    address[] public s_donors;
+    mapping(address => uint256) public s_donorAddressToWETH;
     bool private s_donationsWithdrawn = false;
     bool private s_hasPrizeDeposit = false;
     bool private s_isFromPrizePool = false;
@@ -29,7 +32,7 @@ contract CrowdFund {
     uint256 private MIN_DONATION_USD;
     uint256 private s_fees = 0;
     uint256 public s_campaignEndTime; // Timestamp when the campaign ends
-    uint256 private s_totalDepositsToPrizeVault = 0;
+    uint256 private s_totalDepositsToPrizeVaultTokens = 0;
     uint256 private s_totalDepositsToPrizeVaultEth = 0;
     uint256 private s_sharesReceived = 0; //the donation as a proportion of the total amount in the vault
     uint256 private s_totalWinnings = 0;
@@ -47,11 +50,8 @@ contract CrowdFund {
         i_fundFactory = FundFactory(payable(_fundFactory));
     }
 
-    event FundsReceived(
-        address indexed sender,
-        uint256 amount,
-        uint256 timestamp
-    );
+    event FallbackTriggered(address sender, uint256 value);
+    event WETHUnwrap(uint256 value);
 
     function minDonationValueToEth() public view returns (uint256) {
         uint256 price = uint256(_ethToUsd());
@@ -105,7 +105,7 @@ contract CrowdFund {
         UNISWAP_FACTORY = _uniswapV3Factory;
     }
 
-    function acceptDonation() public payable {
+    function acceptDonation(uint256 _minimumAmountOut) public payable {
         uint256 maxDonation = 100 ether;
         require(
             msg.sender != address(s_swapContract),
@@ -120,21 +120,29 @@ contract CrowdFund {
             "You can only donate a $5 min equivalent in ETH!"
         );
         require(msg.value <= maxDonation, "Donation exceeds the maximum limit");
+
         //wrap the eth to weth
-        IWETH(WETH9).deposit{value: msg.value}();
-        s_donorAmount[msg.sender] += msg.value;
-        s_donors.push(msg.sender);
+        if (msg.value > 0) {
+            s_donorAmount[msg.sender] += msg.value;
+            s_donorAddressToWETH[msg.sender] = msg.value;
+            //wrap ETH to WETH
+            _wrapEth(msg.value);
+        }
+
         s_donationsWithdrawn = false;
 
         require(
             s_isOptedInForPrizeSavings,
             "Project is not opted in for prize savings"
         );
-        uint256 tokenEquivalent = _swapEthToUnderlyingAsset(msg.value);
-
+        //swap WETH to USDC
+        uint256 tokenEquivalent = _swapEthToUnderlyingAsset(
+            s_donorAddressToWETH[msg.sender],
+            _minimumAmountOut
+        );
         require(tokenEquivalent > 0, "Swap from ETH to token failed");
         depositToPrizeVault(tokenEquivalent);
-        updateDepositToPrizeVault(msg.value);
+        updateETHDepositToPrizeVault(s_donorAddressToWETH[msg.sender]);
     }
 
     function _getPairPoolAddressAndFee()
@@ -172,7 +180,7 @@ contract CrowdFund {
     ) internal view returns (uint256 minimumAmountOut) {
         uint32 secondsAgo = 5;
         (, address pairPool) = _getPairPoolAddressAndFee();
-        int24 tick = OracleLibrary.consult(pairPool, secondsAgo);
+        (int24 tick, ) = OracleLibrary.consult(pairPool, secondsAgo);
         minimumAmountOut = OracleLibrary.getQuoteAtTick(
             tick,
             uint128(_amount),
@@ -188,7 +196,7 @@ contract CrowdFund {
     ) internal view returns (uint256 minimumAmountOut) {
         uint32 secondsAgo = 5;
         (, address pairPool) = _getPairPoolAddressAndFee();
-        int24 tick = OracleLibrary.consult(pairPool, secondsAgo);
+        (int24 tick, ) = OracleLibrary.consult(pairPool, secondsAgo);
         minimumAmountOut = OracleLibrary.getQuoteAtTick(
             tick,
             uint128(_amount),
@@ -200,16 +208,13 @@ contract CrowdFund {
     }
 
     function _swapEthToUnderlyingAsset(
-        uint256 _amount
+        uint256 _amount,
+        uint256 _minimumAmountOut
     ) internal returns (uint256) {
-        require(
-            s_isOptedInForPrizeSavings,
-            "Project is not opted in for prize savings"
-        );
         // Swap ETH to the prize vault's underlying asset
         IERC20 underlyingToken = IERC20(s_prizeVault.asset());
         (uint24 poolFee, ) = _getPairPoolAddressAndFee(); //  lowest fee
-        uint256 amountOutMinimum = _estimateMinimumSwapOutputToken(_amount);
+        //uint256 amountOutMinimum = _estimateMinimumSwapOutputToken(_amount);
         TransferHelper.safeApprove(WETH9, address(s_swapContract), _amount);
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
             .ExactInputSingleParams({
@@ -219,7 +224,7 @@ contract CrowdFund {
                 recipient: address(this),
                 deadline: block.timestamp + 15, // 15 seconds from now
                 amountIn: _amount,
-                amountOutMinimum: amountOutMinimum,
+                amountOutMinimum: _minimumAmountOut,
                 sqrtPriceLimitX96: 0
             });
         uint256 amountOut = s_swapContract.exactInputSingle(params);
@@ -228,12 +233,13 @@ contract CrowdFund {
 
     function _swapUnderlyingAssetToEth(
         uint256 _amount,
-        address _underlyingToken
+        address _underlyingToken,
+        uint256 _minimumAmountOut
     ) internal returns (uint256) {
         // Swap the prize vault's underlying asset to ETH
         address underlyingToken = _underlyingToken;
         (uint24 poolFee, ) = _getPairPoolAddressAndFee(); //  lowest fee
-        uint256 amountOutMinimum = _estimateMinimumSwapOutputEth(_amount);
+        //uint256 amountOutMinimum = _estimateMinimumSwapOutputEth(_amount); //- this will be calculated offchain
         TransferHelper.safeApprove(
             underlyingToken,
             address(s_swapContract),
@@ -247,14 +253,14 @@ contract CrowdFund {
                 recipient: address(this),
                 deadline: block.timestamp + 15, // 15 seconds from now
                 amountIn: _amount,
-                amountOutMinimum: amountOutMinimum,
+                amountOutMinimum: _minimumAmountOut,
                 sqrtPriceLimitX96: 0
             });
         uint256 amountOut = s_swapContract.exactInputSingle(params);
         return amountOut;
     }
 
-    function updateDepositToPrizeVault(uint256 _amount) public onlyOwner {
+    function updateETHDepositToPrizeVault(uint256 _amount) public onlyOwner {
         s_totalDepositsToPrizeVaultEth += _amount;
     }
 
@@ -264,45 +270,47 @@ contract CrowdFund {
     function depositToPrizeVault(uint256 _tokenAmount) public onlyOwner {
         // Get underlying token
         IERC20 underlyingToken = IERC20(s_prizeVault.asset());
-
-        uint256 currentTotalFunds = underlyingToken.balanceOf(address(this));
-        require(currentTotalFunds > 0, "No funds available for deposit");
-
-        uint256 amountToDeposit = _tokenAmount == 0
-            ? currentTotalFunds
-            : _tokenAmount;
-        require(currentTotalFunds >= amountToDeposit, "Insufficient funds");
+        require(_tokenAmount > 0, "Token amount must be greater than 0");
 
         //asset returns the address of the underlying erc20 token
-        underlyingToken.approve(address(s_prizeVault), amountToDeposit);
+        underlyingToken.approve(address(s_prizeVault), _tokenAmount);
+        uint256 allowance = underlyingToken.allowance(
+            address(this),
+            address(s_prizeVault)
+        );
+        require(
+            allowance >= _tokenAmount,
+            "Insufficient allowance for PrizeVault"
+        );
 
         // Calculate minimum shares we should receive (e.g., 0.5% slippage)
-        uint256 expectedShares = s_prizeVault.convertToShares(amountToDeposit);
+        uint256 expectedShares = s_prizeVault.convertToShares(_tokenAmount);
         uint256 minShares = (expectedShares * 995) / 1000;
 
         // Deposit and verify received shares
         uint256 sharesReceived = s_prizeVault.deposit(
-            amountToDeposit,
+            _tokenAmount,
             address(this)
         );
         require(sharesReceived >= minShares, "Excessive slippage");
 
         // Update state
         s_sharesReceived += sharesReceived;
-        s_totalDepositsToPrizeVault += amountToDeposit; //token amounts
+        s_totalDepositsToPrizeVaultTokens += _tokenAmount; //token amounts
         s_hasPrizeDeposit = true;
     }
 
     function withdrawDepositFromPrizeVault(
-        uint256 _tokenAmount
-    ) public onlyOwner returns (bool) {
+        uint256 _tokenAmount,
+        uint256 _minAmountOut
+    ) public onlyOwner returns (uint256) {
         require(s_hasPrizeDeposit, "No funds available for withdrawal");
         uint256 assetsToWithdraw = _tokenAmount == 0
-            ? s_totalDepositsToPrizeVault
+            ? s_totalDepositsToPrizeVaultTokens
             : _tokenAmount;
         require(
-            assetsToWithdraw <= s_totalDepositsToPrizeVault,
-            "Insufficient funds"
+            assetsToWithdraw <= s_totalDepositsToPrizeVaultTokens,
+            "Insufficient funds in totalDepositsToPrizeVault"
         );
 
         // Calculate shares to burn for the requested assets
@@ -314,7 +322,7 @@ contract CrowdFund {
         s_isFromPrizeVault = true;
 
         // Update deposit state if all funds withdrawn
-        if (s_totalDepositsToPrizeVault == 0) {
+        if (s_totalDepositsToPrizeVaultTokens == 0) {
             s_hasPrizeDeposit = false;
         }
 
@@ -325,19 +333,33 @@ contract CrowdFund {
             address(this) // owner of shares
         );
 
-        s_totalDepositsToPrizeVault -= withdrawnAmount;
+        require(
+            withdrawnAmount >= assetsToWithdraw,
+            "Withdrawn amount from prize vault does not match requested amount"
+        );
 
-        //swap the withdrawn amount to the donation token (ETH, DAI, USDC, WBTC, etc.)
-        uint256 ethDonation = _swapUnderlyingAssetToEth(
+        s_totalDepositsToPrizeVaultTokens -= withdrawnAmount;
+
+        //swap the withdrawn amount USDC to the donation token (WETH)
+        uint256 wethAmount = _swapUnderlyingAssetToEth(
             withdrawnAmount,
-            s_prizeVault.asset()
+            s_prizeVault.asset(),
+            _minAmountOut
         );
         require(
-            ethDonation > 0,
-            "Swap from prize vault to donation token failed"
+            wethAmount > 0,
+            "Swap from prize vault deposit refund to eth failed"
         );
 
-        return true;
+        //convert WETH to ETH
+        IWETH(WETH9).withdraw(wethAmount);
+
+        return wethAmount;
+    }
+
+    function _wrapEth(uint256 amount) internal {
+        require(amount > 0, "Amount of ETH to wrap must be greater than 0");
+        IWETH(WETH9).deposit{value: amount}();
     }
 
     function getWiningsBalance() public view returns (uint256) {
@@ -350,7 +372,8 @@ contract CrowdFund {
     */
 
     function withdrawPrizeTokens(
-        uint256 _tokenAmount
+        uint256 _tokenAmount,
+        uint256 _minAmountOut
     ) public onlyOwner returns (bool) {
         IERC20 poolToken = s_prizePool.prizeToken();
         require(
@@ -386,7 +409,8 @@ contract CrowdFund {
         //convert projectOwnerWinningPortion back to donation token (e.g., ETH, DAI, USDC, WBTC, etc.)
         uint256 ethWinnings = _swapUnderlyingAssetToEth(
             projectOwnerWinningPortion,
-            address(poolToken)
+            address(poolToken),
+            _minAmountOut
         );
         require(
             ethWinnings > 0,
@@ -417,31 +441,31 @@ contract CrowdFund {
         }
     }
 
-    function withdrawDonations(uint256 _amount) public onlyOwner {
-        require(!s_donationsWithdrawn, "Funds have already been withdrawn");
-        //check to see if there are any donations to the prize vault
-        if (s_totalDepositsToPrizeVault > 0) {
-            bool prizeDepositWithdrawalSuccess = withdrawDepositFromPrizeVault(
-                0
-            );
-            require(
-                prizeDepositWithdrawalSuccess,
-                "Prize deposit withdrawal failed"
-            );
-        }
-
-        if (s_totalWinnings > 0) {
-            bool winningsWithdrawalSuccess = withdrawPrizeTokens(0);
-            require(winningsWithdrawalSuccess, "Winnings withdrawal failed");
-        }
-
-        //at this point, all deposits and winnings have been taken back to the contract and converted to the original donation token
+    function withdrawDonations(
+        uint256 _amount, //eth
+        uint256 _minAmountOut
+    ) public onlyOwner {
         uint256 totalFunds = totalDonations();
-        require(totalFunds > 0, "No funds available for withdrawal");
+        uint256 ethDepositWithdrawalAmount;
+        if (s_hasPrizeDeposit) {
+            if (s_totalDepositsToPrizeVaultTokens > 0) {
+                uint256 tokenAmount = (_amount * s_sharesReceived) / 1 ether;
+                ethDepositWithdrawalAmount = withdrawDepositFromPrizeVault(
+                    tokenAmount,
+                    _minAmountOut
+                );
+                require(
+                    ethDepositWithdrawalAmount >= ((_amount * 98) / 100),
+                    "Prize deposit withdrawal and swap failed or too low amount"
+                );
+            }
+        } else {
+            require(totalFunds >= _amount, "No funds available for withdrawal");
+        }
 
-        uint256 amountToWithdraw = _amount == 0 ? totalFunds : _amount;
-        require(totalFunds >= amountToWithdraw, "Insufficient funds");
-
+        uint256 amountToWithdraw = _amount == 0
+            ? totalFunds
+            : ethDepositWithdrawalAmount;
         // Deduct platform fees
         uint8 reducedFeePercentage = 3;
         uint256 feePercentage = s_totalWinnings > 0
@@ -450,7 +474,8 @@ contract CrowdFund {
         uint256 platformFees = (amountToWithdraw * feePercentage) / 100;
         uint256 netFunds = amountToWithdraw - platformFees;
         s_fees += platformFees;
-        s_totalWinnings = 0;
+        s_totalDepositsToPrizeVaultEth -= amountToWithdraw;
+        //s_totalWinnings = 0;
 
         //send to the project owner
         (bool feeSuccess, ) = payable(address(i_fundFactory)).call{
@@ -476,23 +501,33 @@ contract CrowdFund {
     }
 
     receive() external payable {
+        uint256 selfTrigger = 0;
         if (msg.sender == address(s_swapContract)) {
             _handleSwappedEth(msg.value);
+        } else if (msg.sender == address(this)) {
+            selfTrigger += msg.value;
+        } else if (msg.sender == WETH9) {
+            emit WETHUnwrap(msg.value);
         } else {
-            acceptDonation();
+            acceptDonation(0);
         }
 
-        emit FundsReceived(msg.sender, msg.value, block.timestamp);
+        emit FallbackTriggered(msg.sender, msg.value);
     }
 
     fallback() external payable {
+        uint256 selfTrigger = 0;
         if (msg.sender == address(s_swapContract)) {
             _handleSwappedEth(msg.value);
+        } else if (msg.sender == address(this)) {
+            selfTrigger += msg.value;
+        } else if (msg.sender == WETH9) {
+            emit WETHUnwrap(msg.value);
         } else {
-            acceptDonation();
+            acceptDonation(0);
         }
 
-        emit FundsReceived(msg.sender, msg.value, block.timestamp);
+        emit FallbackTriggered(msg.sender, msg.value);
     }
 
     /**
@@ -503,16 +538,6 @@ contract CrowdFund {
         address _donor
     ) external view onlyOwner returns (uint256) {
         return s_donorAmount[_donor];
-    }
-
-    function getDonorCount() external view onlyOwner returns (uint256) {
-        return s_donors.length;
-    }
-
-    function getDonorAtIndex(
-        uint256 _index
-    ) external view onlyOwner returns (address) {
-        return s_donors[_index];
     }
 
     function getDonationState() external view returns (bool) {
@@ -563,7 +588,15 @@ contract CrowdFund {
         return s_hasPrizeDeposit;
     }
 
-    function getTotalDepositsToPrizeVault() external view returns (uint256) {
-        return s_totalDepositsToPrizeVault;
+    function getTotalTokenDepositsToPrizeVault()
+        external
+        view
+        returns (uint256)
+    {
+        return s_totalDepositsToPrizeVaultTokens;
+    }
+
+    function getTotalEthDepositsToPrizeVault() external view returns (uint256) {
+        return s_totalDepositsToPrizeVaultEth;
     }
 }

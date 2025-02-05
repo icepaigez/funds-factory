@@ -14,6 +14,8 @@ contract FundFactory {
         i_owner = _owner;
     }
 
+    event FundsReceived(address _from, uint256 _amount);
+
     function createFund(address _fundFactory) public returns (CrowdFund) {
         CrowdFund newFund = new CrowdFund(msg.sender, _fundFactory);
         deployedFunds.push(address(newFund));
@@ -57,13 +59,17 @@ contract FundFactory {
     }
 
     fallback() external payable {
-        require(startedFundRaising[msg.sender], "Operation not allowed");
-        feesEarned += msg.value;
+        if (startedFundRaising[msg.sender]) {
+            feesEarned += msg.value;
+        }
+        emit FundsReceived(msg.sender, msg.value);
     }
 
     receive() external payable {
-        require(startedFundRaising[msg.sender], "Operation not allowed");
-        feesEarned += msg.value;
+        if (startedFundRaising[msg.sender]) {
+            feesEarned += msg.value;
+        }
+        emit FundsReceived(msg.sender, msg.value);
     }
 
     modifier onlyOwner() {

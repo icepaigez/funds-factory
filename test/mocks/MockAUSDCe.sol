@@ -3,9 +3,9 @@ pragma solidity ^0.8.19;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract USDC is ERC20 {
-    constructor() ERC20("USD Coin", "USDC") {
-        _mint(msg.sender, 100000000000000000000 * 10 ** 6);
+contract AAVEUSDC is ERC20 {
+    constructor() ERC20("AAVE USD Coin", "avUSDC") {
+        _mint(msg.sender, 10000000000 * 10 ** 6);
     }
 
     function mint(address to, uint256 amount) external {

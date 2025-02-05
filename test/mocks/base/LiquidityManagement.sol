@@ -1,16 +1,16 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
-import {IUniswapV3MintCallback} from "@uniswap/v3-core/contracts/interfaces/callback/IUniswapV3MintCallback.sol";
-import {TickMath} from "@uniswap/v3-core/contracts/libraries/TickMath.sol";
-import {LiquidityAmounts} from "@uniswap/v3-periphery/contracts/libraries/LiquidityAmounts.sol";
-import {PeripheryPayments} from "@uniswap/v3-periphery/contracts/base/PeripheryPayments.sol";
-import {PeripheryImmutableState} from "@uniswap/v3-periphery/contracts/base/PeripheryImmutableState.sol";
-import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import "@uniswap/v3-core/contracts/interfaces/callback/IUniswapV3MintCallback.sol";
+import "@uniswap/v3-core/contracts/libraries/TickMath.sol";
 
-import {PoolAddress} from "../libraries/PoolAddress.sol";
-import {CallbackValidation} from "../libraries/CallbackValidation.sol";
+import "@uniswap/v3-periphery/contracts/libraries/PoolAddress.sol";
+import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
+import "@uniswap/v3-periphery/contracts/libraries/LiquidityAmounts.sol";
+
+import "@uniswap/v3-periphery/contracts/base/PeripheryPayments.sol";
+import "@uniswap/v3-periphery/contracts/temp/PeripheryImmutableState.sol";
 
 /// @title Liquidity management functions
 /// @notice Internal functions for safely managing liquidity in Uniswap V3
@@ -64,26 +64,27 @@ abstract contract LiquidityManagement is
             IUniswapV3Pool pool
         )
     {
+        (address tokenA, address tokenB) = params.token0 < params.token1
+            ? (params.token0, params.token1)
+            : (params.token1, params.token0);
         PoolAddress.PoolKey memory poolKey = PoolAddress.PoolKey({
-            token0: params.token0,
-            token1: params.token1,
+            token0: tokenA,
+            token1: tokenB,
             fee: params.fee
         });
-
         address poolAddress = PoolAddress.computeAddress(factory, poolKey);
         pool = IUniswapV3Pool(poolAddress);
 
         // compute the liquidity amount
         {
             (uint160 sqrtPriceX96, , , , , , ) = pool.slot0();
-
             uint160 sqrtRatioAX96 = TickMath.getSqrtRatioAtTick(
                 params.tickLower
             );
-
             uint160 sqrtRatioBX96 = TickMath.getSqrtRatioAtTick(
                 params.tickUpper
             );
+
             liquidity = LiquidityAmounts.getLiquidityForAmounts(
                 sqrtPriceX96,
                 sqrtRatioAX96,
@@ -91,7 +92,6 @@ abstract contract LiquidityManagement is
                 params.amount0Desired,
                 params.amount1Desired
             );
-            require(liquidity > 0, "liquidity error");
         }
 
         (amount0, amount1) = pool.mint(

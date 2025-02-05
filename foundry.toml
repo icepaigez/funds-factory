@@ -9,6 +9,7 @@ libs = ["lib"]
 fs_permissions = [{ access = "read", path = "./broadcast" }, { access = "read", path = "./reports" }]
 via_ir = true
 optimizer = true
+memory_limit = 43554432
 
 [profile.default.optimizer_details]
 # constantOptimizer = true

@@ -6,7 +6,7 @@ import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRoute
 import {TickMath} from "@uniswap/v3-core/contracts/libraries/TickMath.sol";
 import {SafeCast} from "@uniswap/v3-core/contracts/libraries/SafeCast.sol";
 import {PeripheryValidation} from "./uniswap-v3/PeripheryValidation.sol";
-import {PeripheryImmutableState} from "@uniswap/v3-periphery/contracts/base/PeripheryImmutableState.sol";
+import "@uniswap/v3-periphery/contracts/temp/PeripheryImmutableState.sol";
 import {PeripheryPaymentsWithFee} from "@uniswap/v3-periphery/contracts/base/PeripheryPaymentsWithFee.sol";
 import {Multicall} from "./uniswap-v3/Multicall.sol";
 import {SelfPermit} from "@uniswap/v3-periphery/contracts/base/SelfPermit.sol";

@@ -6,7 +6,7 @@ import {MockV3Aggregator} from "../test/mocks/MockAggregatorV3.sol";
 import {MockPrizeVault} from "../test/mocks/MockPrizeVault.sol";
 import {MockPrizePool} from "../test/mocks/MockPrizePool.sol";
 import {MockTwabController} from "../test/mocks/MockTwabController.sol";
-import {AAVEVault} from "../test/mocks/MockYieldVault.sol";
+import {YieldVault} from "../test/mocks/YieldVault.sol";
 import {UniswapV3Factory} from "../test/mocks/MockUniswapV3Factory.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import {SwapRouter} from "../test/mocks/MockSwapRouter.sol";
@@ -57,15 +57,17 @@ contract HelperConfig is Script {
         0x4200000000000000000000000000000000000006;
     address public constant OP_SEPOLIA_WETH_ADDRESS =
         0x4200000000000000000000000000000000000006;
-    address payable public token0;
-    address payable public token1;
+    address public token0;
+    address public token1;
     UniswapV3Factory uniswapV3Factory;
     INonfungiblePositionManager public immutable nonfungiblePositionManager;
     int24 public immutable i_tickSpacing = 60;
-    uint160 public sqrtPriceX96;
+    uint160 public constant sqrtPriceX96 = 4.56233156999162e30; //3316
+    int24 public lowerTick = 78244; //2500
+    int24 public upperTick = 81609; //3500
     address wethUsdcPoolAddress;
-
-    event LogValue(string message, uint256 value);
+    WETH public weth;
+    USDC public usdc;
 
     constructor() {
         if (block.chainid == SEPOLIA_CHAINID) {
@@ -87,8 +89,8 @@ contract HelperConfig is Script {
     }
 
     struct MockConfigs {
-        address payable weth;
-        address payable usdc;
+        address weth;
+        address usdc;
         address uniswapV3factory;
         address poolPair;
     }
@@ -137,7 +139,7 @@ contract HelperConfig is Script {
         NetworkConfig memory config;
         uint32 periodLength = 3600; // 1 hour period length
         uint32 periodOffset = uint32(block.timestamp - 1 days);
-        address creator = address(0x123);
+        address creator = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
         uint256 tierLiquidityUtilizationRate = 500;
         uint48 drawPeriodSeconds = 86400; //
         uint48 firstDrawOpensAt = uint48(block.timestamp + 1 hours);
@@ -150,8 +152,8 @@ contract HelperConfig is Script {
 
         string memory name = "PrizeVault";
         string memory symbol = "pUSDC.e";
-        uint32 yieldFeePercentage = 500;
-        uint256 yieldBuffer = 100 ether;
+        uint32 yieldFeePercentage = 1e7;
+        uint256 yieldBuffer = 1e5;
 
         address swapRouter;
 
@@ -162,40 +164,40 @@ contract HelperConfig is Script {
         );
 
         //create a pool of WETH/USDC in uniswap
-        uint256 usdcPrice = 3316; //1 WETH = 3316 USDC
-        uint256 wethPrice = 1;
-        WETH weth = new WETH();
-        USDC usdc = new USDC();
-        uint256 amount0 = 1000 ether; // 1000 WETH
-        uint256 amount1 = usdcPrice * 1000 * 1e6; // 3.316m USDC
+        //uint256 usdcPrice = 3316; //1 WETH = 3316 USDC
+        //uint256 wethPrice = 1;
+        weth = new WETH();
+        usdc = new USDC();
+        uint256 amount0 = 2022.605953026898264064 ether; //
+        uint256 amount1 = 33160000000000000452984832; // 3.316m USDC
         uniswapV3Factory = new UniswapV3Factory();
         uint24 fee = 3000; // 0.3%
 
         // Create the Uniswap V3 Pool
-        token0 = payable(address(weth));
-        token1 = payable(address(usdc));
+        token0 = address(weth);
+        token1 = address(usdc);
 
         //swap router
         SwapRouter swapRouterInstance = new SwapRouter(
             address(uniswapV3Factory),
-            token0
+            address(weth)
         );
         swapRouter = address(swapRouterInstance);
 
         //deposit WETH and USDC into the pool
-        sqrtPriceX96 = uint160(
-            Math.sqrt(usdcPrice / wethPrice) * FixedPoint96.Q96
-        );
-        int24 currentTick = 80865;
-        int24 tickLower = ((currentTick - i_tickSpacing) % i_tickSpacing) == 0
-            ? currentTick - i_tickSpacing
-            : currentTick - ((currentTick - i_tickSpacing) % i_tickSpacing);
-        int24 tickUpper = ((currentTick + i_tickSpacing) % i_tickSpacing) == 0
-            ? currentTick + i_tickSpacing
-            : currentTick + (i_tickSpacing - (currentTick % i_tickSpacing));
+
+        int24 tickLower = ((lowerTick - i_tickSpacing) % i_tickSpacing) == 0
+            ? lowerTick - (i_tickSpacing * 1)
+            : (lowerTick - ((lowerTick - i_tickSpacing) % i_tickSpacing)) -
+                (i_tickSpacing * 1);
+        int24 tickUpper = ((upperTick + i_tickSpacing) % i_tickSpacing) == 0
+            ? upperTick + (i_tickSpacing * 1)
+            : (upperTick + (i_tickSpacing - (upperTick % i_tickSpacing))) +
+                (i_tickSpacing * 1);
 
         wethUsdcPoolAddress = _provideLiquidity(
-            token0,
+            address(weth),
+            address(usdc),
             address(uniswapV3Factory),
             amount0,
             amount1,
@@ -228,8 +230,7 @@ contract HelperConfig is Script {
             drawTimeout
         );
 
-        //token & contract for the prize vault
-        AAVEVault yieldVault = new AAVEVault(token1);
+        YieldVault yieldVault = new YieldVault(IERC20(address(usdc)), 0);
         MockPrizeVault prizeVault = new MockPrizeVault(
             name,
             symbol,
@@ -241,7 +242,7 @@ contract HelperConfig is Script {
             yieldBuffer,
             creator
         );
-
+        prizeVault.approveYieldVault();
         config = NetworkConfig({
             priceFeed: address(priceFeed),
             prizeVault: address(prizeVault),
@@ -280,6 +281,7 @@ contract HelperConfig is Script {
 
     function _provideLiquidity(
         address _WETH9,
+        address _USDC,
         address _factory,
         uint256 _amount0ToMint,
         uint256 _amount1ToMint,
@@ -292,26 +294,30 @@ contract HelperConfig is Script {
             _factory
         );
         TransferHelper.safeApprove(
-            token0,
+            _WETH9,
             address(positionManager),
             _amount0ToMint
         );
         TransferHelper.safeApprove(
-            token1,
+            _USDC,
             address(positionManager),
             _amount1ToMint
         );
+        (address tokenA, address tokenB) = _WETH9 < _USDC
+            ? (_WETH9, _USDC)
+            : (_USDC, _WETH9);
         address newPool = positionManager.createAndInitializePoolIfNecessary(
-            token0,
-            token1,
+            tokenA,
+            tokenB,
             _poolFee,
             sqrtPriceX96
         );
-        require(newPool != address(0), "newPool is 0");
+        require(newPool != address(0), "newPool address is 0x0");
+
         INonfungiblePositionManager.MintParams
             memory params = INonfungiblePositionManager.MintParams({
-                token0: token0,
-                token1: token1,
+                token0: _WETH9,
+                token1: _USDC,
                 fee: _poolFee,
                 tickLower: _tickLower,
                 tickUpper: _tickUpper,

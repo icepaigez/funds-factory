@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import {FixedPoint128} from "@uniswap/v3-core/contracts/libraries/FixedPoint128.sol";
-import {FullMath} from "@uniswap/v3-core/contracts/libraries/FullMath.sol";
-import {INonfungiblePositionManager} from "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
-import {INonfungibleTokenPositionDescriptor} from "@uniswap/v3-periphery/contracts/interfaces/INonfungibleTokenPositionDescriptor.sol";
-import {PositionKey} from "@uniswap/v3-periphery/contracts/libraries/PositionKey.sol";
-import {PoolAddress} from "./libraries/PoolAddress.sol";
-import {LiquidityManagement} from "./base/LiquidityManagement.sol";
-import {PeripheryImmutableState} from "@uniswap/v3-periphery/contracts/base/PeripheryImmutableState.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import "@uniswap/v3-core/contracts/libraries/FixedPoint128.sol";
+import "@uniswap/v3-core/contracts/libraries/FullMath.sol";
+
+import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/INonfungibleTokenPositionDescriptor.sol";
+import "@uniswap/v3-periphery/contracts/libraries/PositionKey.sol";
+import "@uniswap/v3-periphery/contracts/libraries/PoolAddress.sol";
+import {LiquidityManagement} from "./base/LiquidityManagement.sol"; //fixed
+
+import "@uniswap/v3-periphery/contracts/temp/PeripheryImmutableState.sol"; //fixed
+
 import {Multicall} from "./uniswap-v3/Multicall.sol";
-import {ERC721Permit} from "./base/ERC721Permit.sol";
+import "./base/ERC721Permit.sol";
 import {PeripheryValidation} from "./uniswap-v3/PeripheryValidation.sol";
-import {SelfPermit} from "@uniswap/v3-periphery/contracts/base/SelfPermit.sol";
+import "@uniswap/v3-periphery/contracts/base/SelfPermit.sol";
 import {PoolInitializer} from "./uniswap-v3/PoolInitializer.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
-import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 
 /// @title NFT positions
 /// @notice Wraps Uniswap V3 positions in the ERC721 non-fungible token interface
@@ -32,8 +31,6 @@ contract NonfungiblePositionManager is
     PeripheryValidation,
     SelfPermit
 {
-    using Counters for Counters.Counter;
-    Counters.Counter private _tokenIds;
     // details about the uniswap position
     struct Position {
         // the nonce for permits
@@ -225,7 +222,7 @@ contract NonfungiblePositionManager is
     }
 
     // save bytecode by removing implementation of unused method
-    //function baseURI() public pure override returns (string memory) {}
+    function baseURI() public pure returns (string memory) {}
 
     /// @inheritdoc INonfungiblePositionManager
     function increaseLiquidity(
@@ -503,26 +500,5 @@ contract NonfungiblePositionManager is
     function _approve(address to, uint256 tokenId) internal override(ERC721) {
         _positions[tokenId].operator = to;
         emit Approval(ownerOf(tokenId), to, tokenId);
-    }
-
-    // Add these implementations
-    function totalSupply() public view override returns (uint256) {
-        return _tokenIds.current();
-    }
-
-    function tokenByIndex(
-        uint256 index
-    ) public view override returns (uint256) {
-        require(index < totalSupply(), "Index out of bounds");
-        return index + 1; // Assuming tokens are minted sequentially
-    }
-
-    function tokenOfOwnerByIndex(
-        address owner,
-        uint256 index
-    ) public view override returns (uint256) {
-        require(index < balanceOf(owner), "Index out of bounds");
-        // This is a simplified implementation
-        return _tokenIds.current(); // You might want to track this properly
     }
 }
