@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {console} from "forge-std/console.sol";
 import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
 import {PrizeVault} from "pt-v5-vault/src/PrizeVault.sol";
 import {PrizePool} from "pt-v5-prize-pool/src/PrizePool.sol";
