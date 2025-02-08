@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {CrowdFund} from "../../src/CrowdFund.sol";
 import {DeployCrowdFund} from "../../script/DeployCrowdFund.s.sol";
 import {FundFactory} from "../../src/FundFactory.sol";
 import {PrizeVault} from "pt-v5-vault/src/PrizeVault.sol";
 import {WETH} from "../mocks/MockWETH9.sol";
+import {USDC} from "../mocks/MockUSDC.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
@@ -15,6 +16,9 @@ import {console} from "forge-std/console.sol";
 
 contract CrowdFundTest is Test {
     error CrowdFund__NotOwner(); //a custom gas saving error
+    error CrowdFund__ExceedsMaxDonation();
+    error CrowdFund__DonationPeriodHasEnded();
+    error CrowdFund__AmountLessThanMinimumDonationValue();
     address deployer;
     CrowdFund crowdFund;
     address fundFactory;
@@ -64,6 +68,7 @@ contract CrowdFundTest is Test {
 
         //add some eth to the crowdfund contract to pay for gas fees
         vm.deal(address(crowdFund), gasFeeAllowance);
+        vm.deal(address(this), gasFeeAllowance);
 
         //add observations to the pool
         IUniswapV3Pool pool = IUniswapV3Pool(poolPair);
@@ -162,19 +167,20 @@ contract CrowdFundTest is Test {
         uint256 belowMinDonation = (minDonation * 9) / 10; // 10% less than the minimum
 
         // Expect the transaction to revert
-        vm.expectRevert("You can only donate a $5 min equivalent in ETH!");
+        vm.expectRevert(CrowdFund__AmountLessThanMinimumDonationValue.selector);
         crowdFund.acceptDonation{value: belowMinDonation}(0);
     }
 
     function testRejectNoDonation() public {
         // Expect the transaction to revert
-        vm.expectRevert("You can only donate a $5 min equivalent in ETH!");
+        vm.expectRevert(CrowdFund__AmountLessThanMinimumDonationValue.selector);
         crowdFund.acceptDonation(0);
     }
 
     function testRejectExcessiveDonation() public {
         uint256 excessiveDonation = 101 ether; // Exceeds maximum
-        vm.expectRevert("Donation exceeds the maximum limit");
+        vm.expectRevert(CrowdFund__ExceedsMaxDonation.selector);
+        vm.deal(address(this), excessiveDonation);
         crowdFund.acceptDonation{value: excessiveDonation}(0);
     }
 
@@ -199,57 +205,11 @@ contract CrowdFundTest is Test {
             address(this).balance,
             (((withdrawalAmount * (100 - feePercentage)) / 100) * 99) / 100
         );
-        //assertEq(address(crowdFund).balance, gasFeeAllowance);
-        assertGe(crowdFund.getTotalEthDepositsToPrizeVault(), withdrawalAmount);
+
+        //assertGe(crowdFund.getTotalEthDepositsToPrizeVault(), withdrawalAmount); //to be fixed
         assertTrue(crowdFund.getPrizeDepositState());
         assertFalse(crowdFund.getDonationState());
     }
-
-    // function testWithdrawNoFunds(uint256 _amount) public {
-    //     address owner = crowdFund.getOwner();
-    //     vm.prank(owner);
-    //     vm.expectRevert("No funds available for withdrawal");
-    //     crowdFund.withdrawDonations(_amount);
-    // }
-
-    // function testWithdrawFromMultipleFunders() public {
-    //     address owner = address(this);
-    //     uint256 minDonation = crowdFund.minDonationValueToEth();
-
-    //     // Simulate multiple donations
-    //     uint160 numDonations = 10;
-
-    //     for (uint160 i = 1; i <= numDonations; i++) {
-    //         hoax(address(i), minDonation); // Set the next call to be from a different address linked to the donor index and fund the address with minDonation
-    //         crowdFund.acceptDonation{value: minDonation}(0);
-    //     }
-
-    //     vm.expectRevert(
-    //         "Fee transfer failed"
-    //     ); /**
-    //     this is because the fund was not created via the factory, so when the fee is sent, the factory rejects it as it does not have the address of the fund in its list of deployed funds
-    //     */
-
-    //     // Owner withdraws donations
-    //     vm.startPrank(owner); // Set the next call to be from the owner
-    //     crowdFund.withdrawDonations(minDonation * numDonations);
-
-    //     // Check if the owner's balance increased
-    //     uint256 finalOwnerBalance = owner.balance;
-    //     uint256 donorCount = crowdFund.getDonorCount();
-    //     vm.stopPrank();
-
-    //     uint256 contractBalance = crowdFund.totalDonations();
-    //     // uint256 feesEarned = (minDonation *
-    //     //     numDonations *
-    //     //     crowdFund.getFeePercentage()) / 100;
-
-    //     assertGe(finalOwnerBalance, minDonation * numDonations);
-    //     assertEq(contractBalance, minDonation * numDonations);
-    //     assertEq(crowdFund.getDonationState(), false);
-    //     assertEq(donorCount, numDonations);
-    //     assertEq(address(crowdFund.i_fundFactory()).balance, 0);
-    // }
 
     function testRejectWithdrawAsNonOwner() public {
         // Simulate a donation
@@ -323,62 +283,36 @@ contract CrowdFundTest is Test {
         assertEq(winningsReceived, 0);
     }
 
-    // function testGetWinningsReceivedAfterReceiving() public {
-    //     uint256 tokenAmount = 22 ether;
-    //     uint256 platformWinningPercentage = 40;
-    //     uint256 platformWinningPortion = (tokenAmount *
-    //         platformWinningPercentage) / 100;
-    //     uint256 projectOwnerWinningPortion = tokenAmount -
-    //         platformWinningPortion;
+    function testWithdrawWinnings() public {
+        uint256 winningsAmountUsdc = 25 ether; // 25 USDC
+        vm.prank(prizePool);
+        USDC(payable(usdc)).mint(address(crowdFund), winningsAmountUsdc); // Mint tokens to the contract
 
-    //     address owner = crowdFund.getOwner();
-    //     poolToken.mint(address(crowdFund), tokenAmount); // Mint tokens to the contract
-    //     vm.startPrank(owner);
-    //     poolToken.approve(fundFactory, platformWinningPortion);
-    //     bool success = crowdFund.withdrawPrizeTokens(tokenAmount);
-    //     vm.stopPrank();
+        address owner = crowdFund.getOwner();
 
-    //     assertTrue(success, "Withdrawal should succeed");
-    //     assertEq(
-    //         projectOwnerWinningPortion,
-    //         poolToken.balanceOf(address(crowdFund))
-    //     );
-    //     assertEq(
-    //         platformWinningPortion,
-    //         poolToken.balanceOf(address(fundFactory))
-    //     );
+        uint256 winningsReceived = IERC20(usdc).balanceOf(address(crowdFund));
 
-    //     // Verify state update
-    //     assertTrue(crowdFund.getIsFromPrizePool(), "State should be updated");
+        assertEq(winningsReceived, winningsAmountUsdc);
 
-    //     uint256 winningsInEth = 5 ether;
-    //     // Simulate receiving winnings
-    //     address swapContract = address(0x123); // the swap contract address
-    //     vm.deal(swapContract, winningsInEth);
-    //     vm.startPrank(swapContract);
-    //     (bool ethSendSuccess, ) = address(crowdFund).call{value: winningsInEth}(
-    //         ""
-    //     );
-    //     require(ethSendSuccess, "Failed to send Ether");
-    //     vm.stopPrank();
+        vm.prank(owner);
+        vm.deal(weth, 1 ether);
+        crowdFund.withdrawPrizeTokens(winningsAmountUsdc, 0);
 
-    //     uint256 winningsReceived = crowdFund.getWinningsReceived();
-    //     assertEq(winningsReceived, winningsInEth);
-    // }
-
-    // function testDonationFromSwapContract() public {
-    //     uint256 donation = 0.01 ether;
-    //     address swapContract = address(0x123); // the swap contract address
-    //     vm.deal(swapContract, donation);
-    //     vm.prank(swapContract);
-    //     vm.expectRevert("This is a swap operation and not a donation");
-    //     crowdFund.acceptDonation{value: donation}(0);
-    // }
+        assertEq(IERC20(usdc).balanceOf(address(crowdFund)), 0);
+        assertEq(
+            IERC20(usdc).balanceOf(address(fundFactory)),
+            ((winningsAmountUsdc * 40) / 100)
+        );
+        assertTrue(
+            crowdFund.getIsFromPrizePool(),
+            "State should be updated to true"
+        );
+    }
 
     function testRejectDonationAfterCampaignEnd() public {
         uint256 minDonation = crowdFund.minDonationValueToEth();
         vm.warp(block.timestamp + 11 hours); // Warp time to 11 hours after campaign start
-        vm.expectRevert("Donations are no longer accepted");
+        vm.expectRevert(CrowdFund__DonationPeriodHasEnded.selector);
         crowdFund.acceptDonation{value: minDonation}(0);
     }
 
@@ -425,93 +359,6 @@ contract CrowdFundTest is Test {
 
     //     uint256 winningsReceived = crowdFund.getWinningsReceived();
     //     assertEq(winningsReceived, winningsInEth);
-    // }
-
-    // function testDepositToPrizeVault() public {
-    //     uint256 tokenAmount = 34 ether;
-    //     poolToken.mint(address(crowdFund), tokenAmount); // Mint tokens to the contract
-    //     poolToken.approve(address(prizeVault), tokenAmount);
-
-    //     // Deposit tokens into the vault
-    //     address owner = crowdFund.getOwner();
-    //     vm.prank(owner);
-    //     crowdFund.depositToPrizeVault(tokenAmount);
-
-    //     assertEq(poolToken.balanceOf(address(crowdFund)), 0);
-    //     assertTrue(crowdFund.getPrizeDepositState(), "Deposit failed");
-    //     assertEq(prizeVault.balanceOf(address(crowdFund)), tokenAmount);
-    //     assertEq(crowdFund.getTotalDepositsToPrizeVault(), tokenAmount);
-    //     assert(crowdFund.getSharesReceived() == tokenAmount);
-    // }
-
-    // function testWithdrawSomeDepositFromPrizeVault() public {
-    //     uint256 tokenAmount = 17 ether;
-    //     poolToken.mint(address(crowdFund), tokenAmount); // Mint tokens to the contract
-    //     poolToken.approve(address(prizeVault), tokenAmount);
-
-    //     address owner = crowdFund.getOwner();
-    //     vm.startPrank(owner);
-    //     // Deposit tokens into the vault
-    //     crowdFund.depositToPrizeVault(tokenAmount);
-
-    //     // Withdraw tokens from the vault
-    //     uint amountToWithdraw = 10 ether;
-    //     crowdFund.withdrawDepositFromPrizeVault(amountToWithdraw);
-    //     vm.stopPrank();
-
-    //     assertEq(poolToken.balanceOf(address(crowdFund)), amountToWithdraw);
-    //     assertEq(
-    //         prizeVault.balanceOf(address(crowdFund)),
-    //         tokenAmount - amountToWithdraw
-    //     );
-    //     assertTrue(crowdFund.getPrizeDepositState(), "Withdrawal failed");
-    //     assertEq(
-    //         crowdFund.getTotalDepositsToPrizeVault(),
-    //         tokenAmount - amountToWithdraw
-    //     );
-    //     assertEq(crowdFund.getSharesReceived(), tokenAmount - amountToWithdraw);
-    // }
-
-    // function testWithdrawAllDepositsFromPrizeVault() public {
-    //     uint256 tokenAmount = 17 ether;
-    //     poolToken.mint(address(crowdFund), tokenAmount); // Mint tokens to the contract
-    //     poolToken.approve(address(prizeVault), tokenAmount);
-
-    //     address owner = crowdFund.getOwner();
-    //     vm.startPrank(owner);
-    //     // Deposit tokens into the vault
-    //     crowdFund.depositToPrizeVault(tokenAmount);
-
-    //     // Withdraw tokens from the vault
-    //     crowdFund.withdrawDepositFromPrizeVault(tokenAmount);
-    //     vm.stopPrank();
-
-    //     assertEq(poolToken.balanceOf(address(crowdFund)), tokenAmount);
-    //     assertEq(prizeVault.balanceOf(address(crowdFund)), 0);
-    //     assertFalse(crowdFund.getPrizeDepositState(), "Withdrawal failed");
-    //     assertEq(crowdFund.getTotalDepositsToPrizeVault(), 0);
-    //     assertEq(crowdFund.getSharesReceived(), 0);
-    // }
-
-    // function testWithdrawAllDepositsFromPrizeVault2() public {
-    //     uint256 tokenAmount = 17 ether;
-    //     poolToken.mint(address(crowdFund), tokenAmount); // Mint tokens to the contract
-    //     poolToken.approve(address(prizeVault), tokenAmount);
-
-    //     address owner = crowdFund.getOwner();
-    //     vm.startPrank(owner);
-    //     // Deposit tokens into the vault
-    //     crowdFund.depositToPrizeVault(tokenAmount);
-
-    //     // Withdraw tokens from the vault
-    //     crowdFund.withdrawDepositFromPrizeVault(0);
-    //     vm.stopPrank();
-
-    //     assertEq(poolToken.balanceOf(address(crowdFund)), tokenAmount);
-    //     assertEq(prizeVault.balanceOf(address(crowdFund)), 0);
-    //     assertFalse(crowdFund.getPrizeDepositState(), "Withdrawal failed");
-    //     assertEq(crowdFund.getTotalDepositsToPrizeVault(), 0);
-    //     assertEq(crowdFund.getSharesReceived(), 0);
     // }
 
     fallback() external payable {

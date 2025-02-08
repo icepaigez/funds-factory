@@ -16,9 +16,30 @@ import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRoute
 import {TransferHelper} from "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "forge-std/console.sol";
 
+/**
+ * @title A crowd funding contract that supports prize savings.
+ * @author Tunde Oduguwa
+ * @dev Implements Uniswap V3 and Pool Together V5
+ */
+
 contract CrowdFund is ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    // Error messages
     error CrowdFund__NotOwner(); //a custom gas saving error
+    error CrowdFund__ExceedsMaxDonation();
+    error CrowdFund__NotOptedInToPrizeSavings();
+    error CrowdFund__InvalidPriceFeedData();
+    error CrowdFund__DonationPeriodHasEnded();
+    error CrowdFund__AmountLessThanMinimumDonationValue();
+    error CrowdFund__SwapFailed();
+    error CrowdFund__TokenAmountMustBeGreaterThanZero();
+    error CrowdFund__InsufficientTokenAllowance();
+    error CrowdFund__ExcessiveSlippage();
+    error CrowdFund__NoPrizeDeposit();
+    error CrowdFund__InsufficientPrizeVaultTokenDeposit();
+    error CrowdFund__InsufficientPrizeVaultShares();
+    error CrowdFund__InsufficientPrizeTokens();
 
     // State variables
     address public immutable i_owner;
@@ -50,12 +71,11 @@ contract CrowdFund is ReentrancyGuard {
         i_fundFactory = FundFactory(payable(_fundFactory));
     }
 
-    event FallbackTriggered(address sender, uint256 value);
     event WETHUnwrap(uint256 value);
 
     function minDonationValueToEth() public view returns (uint256) {
         uint256 price = uint256(_ethToUsd());
-        require(price > 0, "Invalid price feed data");
+        if (price <= 0) revert CrowdFund__InvalidPriceFeedData();
         uint8 decimals = s_dataFeed.decimals();
         uint256 ethValue = (MIN_DONATION_USD * 10 ** 18) / uint256(price);
         return ethValue * (10 ** decimals);
@@ -111,15 +131,11 @@ contract CrowdFund is ReentrancyGuard {
             msg.sender != address(s_swapContract),
             "This is a swap operation and not a donation"
         );
-        require(
-            block.timestamp <= s_campaignEndTime,
-            "Donations are no longer accepted"
-        );
-        require(
-            msg.value >= minDonationValueToEth(),
-            "You can only donate a $5 min equivalent in ETH!"
-        );
-        require(msg.value <= maxDonation, "Donation exceeds the maximum limit");
+        if (block.timestamp > s_campaignEndTime)
+            revert CrowdFund__DonationPeriodHasEnded();
+        if (msg.value < minDonationValueToEth())
+            revert CrowdFund__AmountLessThanMinimumDonationValue();
+        if (msg.value > maxDonation) revert CrowdFund__ExceedsMaxDonation();
 
         //wrap the eth to weth
         if (msg.value > 0) {
@@ -131,16 +147,15 @@ contract CrowdFund is ReentrancyGuard {
 
         s_donationsWithdrawn = false;
 
-        require(
-            s_isOptedInForPrizeSavings,
-            "Project is not opted in for prize savings"
-        );
+        if (!s_isOptedInForPrizeSavings)
+            revert CrowdFund__NotOptedInToPrizeSavings();
+
         //swap WETH to USDC
         uint256 tokenEquivalent = _swapEthToUnderlyingAsset(
             s_donorAddressToWETH[msg.sender],
             _minimumAmountOut
         );
-        require(tokenEquivalent > 0, "Swap from ETH to token failed");
+        if (tokenEquivalent < 0) revert CrowdFund__SwapFailed();
         depositToPrizeVault(tokenEquivalent);
         updateETHDepositToPrizeVault(s_donorAddressToWETH[msg.sender]);
     }
@@ -270,7 +285,8 @@ contract CrowdFund is ReentrancyGuard {
     function depositToPrizeVault(uint256 _tokenAmount) public onlyOwner {
         // Get underlying token
         IERC20 underlyingToken = IERC20(s_prizeVault.asset());
-        require(_tokenAmount > 0, "Token amount must be greater than 0");
+        if (_tokenAmount <= 0)
+            revert CrowdFund__TokenAmountMustBeGreaterThanZero();
 
         //asset returns the address of the underlying erc20 token
         underlyingToken.approve(address(s_prizeVault), _tokenAmount);
@@ -278,10 +294,8 @@ contract CrowdFund is ReentrancyGuard {
             address(this),
             address(s_prizeVault)
         );
-        require(
-            allowance >= _tokenAmount,
-            "Insufficient allowance for PrizeVault"
-        );
+        if (allowance < _tokenAmount)
+            revert CrowdFund__InsufficientTokenAllowance();
 
         // Calculate minimum shares we should receive (e.g., 0.5% slippage)
         uint256 expectedShares = s_prizeVault.convertToShares(_tokenAmount);
@@ -292,7 +306,7 @@ contract CrowdFund is ReentrancyGuard {
             _tokenAmount,
             address(this)
         );
-        require(sharesReceived >= minShares, "Excessive slippage");
+        if (sharesReceived < minShares) revert CrowdFund__ExcessiveSlippage();
 
         // Update state
         s_sharesReceived += sharesReceived;
@@ -304,18 +318,17 @@ contract CrowdFund is ReentrancyGuard {
         uint256 _tokenAmount,
         uint256 _minAmountOut
     ) public onlyOwner returns (uint256) {
-        require(s_hasPrizeDeposit, "No funds available for withdrawal");
+        if (!s_hasPrizeDeposit) revert CrowdFund__NoPrizeDeposit();
         uint256 assetsToWithdraw = _tokenAmount == 0
             ? s_totalDepositsToPrizeVaultTokens
             : _tokenAmount;
-        require(
-            assetsToWithdraw <= s_totalDepositsToPrizeVaultTokens,
-            "Insufficient funds in totalDepositsToPrizeVault"
-        );
+        if (assetsToWithdraw > s_totalDepositsToPrizeVaultTokens)
+            revert CrowdFund__InsufficientPrizeVaultTokenDeposit();
 
         // Calculate shares to burn for the requested assets
         uint256 sharesToBurn = s_prizeVault.convertToShares(assetsToWithdraw);
-        require(sharesToBurn <= s_sharesReceived, "Insufficient shares");
+        if (sharesToBurn > s_sharesReceived)
+            revert CrowdFund__InsufficientPrizeVaultShares();
 
         // Update state
         s_sharesReceived -= sharesToBurn;
@@ -333,10 +346,8 @@ contract CrowdFund is ReentrancyGuard {
             address(this) // owner of shares
         );
 
-        require(
-            withdrawnAmount >= assetsToWithdraw,
-            "Withdrawn amount from prize vault does not match requested amount"
-        );
+        if (withdrawnAmount < assetsToWithdraw)
+            revert CrowdFund__ExcessiveSlippage();
 
         s_totalDepositsToPrizeVaultTokens -= withdrawnAmount;
 
@@ -346,11 +357,8 @@ contract CrowdFund is ReentrancyGuard {
             s_prizeVault.asset(),
             _minAmountOut
         );
-        require(
-            wethAmount > 0,
-            "Swap from prize vault deposit refund to eth failed"
-        );
 
+        if (wethAmount <= 0) revert CrowdFund__SwapFailed();
         //convert WETH to ETH
         IWETH(WETH9).withdraw(wethAmount);
 
@@ -358,7 +366,7 @@ contract CrowdFund is ReentrancyGuard {
     }
 
     function _wrapEth(uint256 amount) internal {
-        require(amount > 0, "Amount of ETH to wrap must be greater than 0");
+        if (amount == 0) revert CrowdFund__TokenAmountMustBeGreaterThanZero();
         IWETH(WETH9).deposit{value: amount}();
     }
 
@@ -368,18 +376,16 @@ contract CrowdFund is ReentrancyGuard {
     }
 
     /**
-        The project owner can call this function manually; if called manually, the converted amount is sent to the owner in a separate transaction
+        This withdraws the winnings from the prize pool
     */
 
     function withdrawPrizeTokens(
         uint256 _tokenAmount,
         uint256 _minAmountOut
-    ) public onlyOwner returns (bool) {
+    ) public onlyOwner {
         IERC20 poolToken = s_prizePool.prizeToken();
-        require(
-            poolToken.balanceOf(address(this)) >= _tokenAmount,
-            "Insufficient prize tokens"
-        );
+        if (poolToken.balanceOf(address(this)) < _tokenAmount)
+            revert CrowdFund__InsufficientPrizeTokens();
         uint256 amountToWithdraw = _tokenAmount == 0
             ? IERC20(poolToken).balanceOf(address(this))
             : _tokenAmount;
@@ -406,18 +412,20 @@ contract CrowdFund is ReentrancyGuard {
 
         //update state
         s_isFromPrizePool = true;
-        //convert projectOwnerWinningPortion back to donation token (e.g., ETH, DAI, USDC, WBTC, etc.)
+        //convert projectOwnerWinningPortion USDC TO WETH
         uint256 ethWinnings = _swapUnderlyingAssetToEth(
             projectOwnerWinningPortion,
             address(poolToken),
             _minAmountOut
         );
-        require(
-            ethWinnings > 0,
-            "Swap from prize pool to donation token failed"
-        );
+        if (ethWinnings <= 0) revert CrowdFund__SwapFailed();
 
-        return true;
+        //convert WETH to ETH
+        IWETH(WETH9).withdraw(ethWinnings);
+
+        //send to the project owner
+        (bool success, ) = payable(i_owner).call{value: ethWinnings}("");
+        require(success, "ETH winnings transfer failed");
     }
 
     function _handleWinnings(uint256 _winningsAmountInEth) internal {
@@ -502,32 +510,26 @@ contract CrowdFund is ReentrancyGuard {
 
     receive() external payable {
         uint256 selfTrigger = 0;
-        if (msg.sender == address(s_swapContract)) {
-            _handleSwappedEth(msg.value);
-        } else if (msg.sender == address(this)) {
+        if (msg.sender == address(this)) {
             selfTrigger += msg.value;
         } else if (msg.sender == WETH9) {
+            _handleSwappedEth(msg.value);
             emit WETHUnwrap(msg.value);
         } else {
             acceptDonation(0);
         }
-
-        emit FallbackTriggered(msg.sender, msg.value);
     }
 
     fallback() external payable {
         uint256 selfTrigger = 0;
-        if (msg.sender == address(s_swapContract)) {
-            _handleSwappedEth(msg.value);
-        } else if (msg.sender == address(this)) {
+        if (msg.sender == address(this)) {
             selfTrigger += msg.value;
         } else if (msg.sender == WETH9) {
+            _handleSwappedEth(msg.value);
             emit WETHUnwrap(msg.value);
         } else {
             acceptDonation(0);
         }
-
-        emit FallbackTriggered(msg.sender, msg.value);
     }
 
     /**
